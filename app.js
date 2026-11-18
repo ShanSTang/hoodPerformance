@@ -2323,126 +2323,531 @@ function getAnalysisRows() {
   });
 }
 
+
 function updateAnalysis() {
   const metric = analysisMetric.value;
   const rows = getAnalysisRows();
   const old = analysisHood.value || selectedHoodKey;
-  analysisHood.innerHTML = '<option value="">Select a hood</option>' +
-    rows.slice().sort((a,b) => naturalSort(a.key,b.key)).map(r =>
-      `<option value="${escapeHTML(r.key)}">${escapeHTML(r.key)}</option>`).join("");
-  if (rows.some(r => r.key === old)) analysisHood.value = old;
+
+  // ---------------------------------------------------------
+  // Hood Selection
+  // ---------------------------------------------------------
+
+  analysisHood.innerHTML =
+    '<option value="">Select a hood</option>' +
+    rows
+      .slice()
+      .sort((a, b) => naturalSort(a.key, b.key))
+      .map(r =>
+        `<option value="${escapeHTML(r.key)}">${escapeHTML(r.key)}</option>`
+      )
+      .join("");
+
+  if (rows.some(r => r.key === old)) {
+    analysisHood.value = old;
+  }
+
   const current = rows.find(r => r.key === analysisHood.value);
-  const unit = metric === "ach" ? "ACH" : metric === "faceVelocity" ? "fpm" : "%";
-  const fmt = value => Number.isFinite(value) ? `${formatNumber(value, 2)} ${unit}` : "—";
-  document.getElementById("analysisLatest").textContent = current ? fmt(current.value) : "—";
-  document.getElementById("analysisMean").textContent = current ? fmt(current.mean) : "—";
-  document.getElementById("analysisDeviation").textContent = current && Number.isFinite(current.pct) ?
-    `${current.pct > 0 ? "+" : ""}${formatNumber(current.pct, 1)}% (${fmt(current.deviation)})` : "—";
-  document.getElementById("analysisStdDev").textContent = current ? fmt(current.sampleStdDev) : "—";
-  document.getElementById("analysisInfo").textContent = current ?
-    `${current.records.length} valid ${unit} measurements; ${Math.max(0,current.records.length - 1)} used for historical mean. ${formatDate(current.latest.date)} is the latest valid test.` :
-    "Select a hood to view its historical statistics.";
-  const sortedRows = rows.slice().sort((a,b) => {
+
+  // ---------------------------------------------------------
+  // Measurement Formatting
+  // ---------------------------------------------------------
+
+  const unit =
+    metric === "ach"
+      ? "ACH"
+      : metric === "faceVelocity"
+        ? "fpm"
+        : "%";
+
+  const fmt = value =>
+    Number.isFinite(value)
+      ? `${formatNumber(value, 2)} ${unit}`
+      : "—";
+
+  // ---------------------------------------------------------
+  // Performance Analysis KPIs
+  // ---------------------------------------------------------
+
+  document.getElementById("analysisLatest").textContent =
+    current ? fmt(current.value) : "—";
+
+  document.getElementById("analysisMean").textContent =
+    current ? fmt(current.mean) : "—";
+
+  document.getElementById("analysisDeviation").textContent =
+    current && Number.isFinite(current.pct)
+      ? `${current.pct > 0 ? "+" : ""}${formatNumber(current.pct, 1)}% (${fmt(current.deviation)})`
+      : "—";
+
+  document.getElementById("analysisStdDev").textContent =
+    current ? fmt(current.sampleStdDev) : "—";
+
+  document.getElementById("analysisInfo").textContent =
+    current
+      ? `${current.records.length} valid ${unit} measurements; ` +
+        `${Math.max(0, current.records.length - 1)} used for historical mean. ` +
+        `${formatDate(current.latest.date)} is the latest valid test.`
+      : "Select a hood to view its historical statistics.";
+
+  // ---------------------------------------------------------
+  // Sort All Hoods Table
+  // ---------------------------------------------------------
+
+  const sortedRows = rows.slice().sort((a, b) => {
     const col = analysisSortColumn;
-    let av = col === "date" ? a.latest.date.getTime() :
-      ["building","lab","hood"].includes(col) ? a.latest[col] : a[col];
-    let bv = col === "date" ? b.latest.date.getTime() :
-      ["building","lab","hood"].includes(col) ? b.latest[col] : b[col];
-    const aMissing = av === null || av === undefined || (typeof av === "number" && !Number.isFinite(av));
-    const bMissing = bv === null || bv === undefined || (typeof bv === "number" && !Number.isFinite(bv));
-    if (aMissing !== bMissing) return aMissing ? 1 : -1;
-    let cmp = aMissing ? 0 : typeof av === "string" ? naturalSort(av,bv) : av - bv;
-    return (analysisSortDirection === "asc" ? cmp : -cmp) || naturalSort(a.key,b.key);
+
+    let av =
+      col === "date"
+        ? a.latest.date.getTime()
+        : ["building", "lab", "hood"].includes(col)
+          ? a.latest[col]
+          : a[col];
+
+    let bv =
+      col === "date"
+        ? b.latest.date.getTime()
+        : ["building", "lab", "hood"].includes(col)
+          ? b.latest[col]
+          : b[col];
+
+    const aMissing =
+      av === null ||
+      av === undefined ||
+      (typeof av === "number" && !Number.isFinite(av));
+
+    const bMissing =
+      bv === null ||
+      bv === undefined ||
+      (typeof bv === "number" && !Number.isFinite(bv));
+
+    if (aMissing !== bMissing) {
+      return aMissing ? 1 : -1;
+    }
+
+    let cmp = aMissing
+      ? 0
+      : typeof av === "string"
+        ? naturalSort(av, bv)
+        : av - bv;
+
+    return (
+      (analysisSortDirection === "asc" ? cmp : -cmp) ||
+      naturalSort(a.key, b.key)
+    );
   });
-  document.getElementById("analysisBody").innerHTML = rows.length ?
-    sortedRows.map(r => `<tr><td>${escapeHTML(r.latest.building)}</td><td>${escapeHTML(r.latest.lab)}</td>
-      <td><button type="button" class="table-hood-button analysis-select" data-hood="${escapeHTML(r.key)}">${escapeHTML(r.latest.hood)}</button></td>
-      <td>${fmt(r.value)}</td><td>${fmt(r.mean)}</td><td>${Number.isFinite(r.pct) ? `${r.pct > 0 ? "+" : ""}${formatNumber(r.pct,1)}%` : "—"}</td>
-      <td>${formatDate(r.latest.date)}</td></tr>`).join("") :
-    '<tr><td colspan="7" class="empty-cell">No measurements match the current filters.</td></tr>';
+
+  // ---------------------------------------------------------
+  // Populate All Hoods Table
+  // ---------------------------------------------------------
+
+  document.getElementById("analysisBody").innerHTML =
+    rows.length
+      ? sortedRows
+          .map(
+            r => `
+              <tr>
+                <td>${escapeHTML(r.latest.building)}</td>
+                <td>${escapeHTML(r.latest.lab)}</td>
+
+                <td>
+                  <button
+                    type="button"
+                    class="table-hood-button analysis-select"
+                    data-hood="${escapeHTML(r.key)}"
+                  >
+                    ${escapeHTML(r.latest.hood)}
+                  </button>
+                </td>
+
+                <td>${fmt(r.value)}</td>
+                <td>${fmt(r.mean)}</td>
+
+                <td>
+                  ${
+                    Number.isFinite(r.pct)
+                      ? `${r.pct > 0 ? "+" : ""}${formatNumber(r.pct, 1)}%`
+                      : "—"
+                  }
+                </td>
+
+                <td>${formatDate(r.latest.date)}</td>
+              </tr>
+            `
+          )
+          .join("")
+      : `
+          <tr>
+            <td colspan="7" class="empty-cell">
+              No measurements match the current filters.
+            </td>
+          </tr>
+        `;
+
+  // ---------------------------------------------------------
+  // Update Table Sorting Indicators
+  // ---------------------------------------------------------
+
   document.querySelectorAll("[data-analysis-sort]").forEach(th => {
-    th.classList.toggle("sort-asc", th.dataset.analysisSort === analysisSortColumn && analysisSortDirection === "asc");
-    th.classList.toggle("sort-desc", th.dataset.analysisSort === analysisSortColumn && analysisSortDirection === "desc");
-    th.setAttribute("aria-sort", th.dataset.analysisSort === analysisSortColumn ?
-      (analysisSortDirection === "asc" ? "ascending" : "descending") : "none");
+    const isSelected =
+      th.dataset.analysisSort === analysisSortColumn;
+
+    th.classList.toggle(
+      "sort-asc",
+      isSelected && analysisSortDirection === "asc"
+    );
+
+    th.classList.toggle(
+      "sort-desc",
+      isSelected && analysisSortDirection === "desc"
+    );
+
+    th.setAttribute(
+      "aria-sort",
+      isSelected
+        ? analysisSortDirection === "asc"
+          ? "ascending"
+          : "descending"
+        : "none"
+    );
   });
-  document.querySelectorAll(".analysis-select").forEach(button => button.addEventListener("click", () => {
-    analysisHood.value = button.dataset.hood;
-    selectedHoodKey = button.dataset.hood;
-    hoodFilter.value = selectedHoodKey;
-    updateTrendChart(); updateFaceVelocityChart(); updateAnalysis();
-  }));
+
+  // ---------------------------------------------------------
+  // Hood Selection from All Hoods Table
+  // ---------------------------------------------------------
+
+  document.querySelectorAll(".analysis-select").forEach(button => {
+    button.addEventListener("click", () => {
+      analysisHood.value = button.dataset.hood;
+      selectedHoodKey = button.dataset.hood;
+      hoodFilter.value = selectedHoodKey;
+
+      updateTrendChart();
+      updateFaceVelocityChart();
+      updateAnalysis();
+    });
+  });
+
+  // ---------------------------------------------------------
+  // Chart Elements
+  // ---------------------------------------------------------
+
   const hist = document.getElementById("analysisHistoryChart");
   const fleet = document.getElementById("analysisFleetChart");
-  const historyTraces = current ? [{type:"scatter",mode:"lines+markers",name:"Measurements",
-    x:current.records.map(r=>r.date),y:current.records.map(r=>r[metric])}] : [];
-  if (current && Number.isFinite(current.mean)) historyTraces.push({type:"scatter",mode:"lines",
-    name:"Historical mean",x:[current.records[0].date,current.latest.date],y:[current.mean,current.mean],
-    line:{dash:"dash",color:"#2864dc"}});
-  // Use the same user-configured green bands as the original trend charts.
-  // COV has no defined passing range, so it is intentionally unshaded.
-  const range = metric === "ach" || metric === "faceVelocity" ? greenBoxRanges[metric] : null;
-  const validRange = range && Number.isFinite(range.min) && Number.isFinite(range.max) && range.min < range.max;
+
+  // ---------------------------------------------------------
+  // Selected Hood History Chart
+  // ---------------------------------------------------------
+
+  const historyTraces = current
+    ? [
+        {
+          type: "scatter",
+          mode: "lines+markers",
+          name: "Measurements",
+          x: current.records.map(r => r.date),
+          y: current.records.map(r => r[metric])
+        }
+      ]
+    : [];
+
+  // Add historical mean reference line.
+  if (current && Number.isFinite(current.mean)) {
+    historyTraces.push({
+      type: "scatter",
+      mode: "lines",
+      name: "Historical mean",
+
+      x: [
+        current.records[0].date,
+        current.latest.date
+      ],
+
+      y: [
+        current.mean,
+        current.mean
+      ],
+
+      line: {
+        dash: "dash",
+        color: "#2864dc"
+      }
+    });
+  }
+
+  // ---------------------------------------------------------
+  // Green Passing Range
+  // ---------------------------------------------------------
+
+  // Use the same user-configured green ranges as the
+  // original ACH and face velocity trend charts.
+  //
+  // COV has no defined passing range and is not shaded.
+
+  const range =
+    metric === "ach" || metric === "faceVelocity"
+      ? greenBoxRanges[metric]
+      : null;
+
+  const validRange =
+    range &&
+    Number.isFinite(range.min) &&
+    Number.isFinite(range.max) &&
+    range.min < range.max;
+
   const rangeNote = document.getElementById("analysisRangeNote");
+
   rangeNote.textContent = validRange
     ? `Green band: ${formatNumber(range.min, 2)}–${formatNumber(range.max, 2)} ${unit} (configured on Summary).`
-    : metric === "cov" ? "No green band for COV: a passing range has not been defined."
-    : "No valid green range is configured for this measurement.";
-  const rangeShapes = validRange ? [{
-    type: "rect", xref: "paper", x0: 0, x1: 1, yref: "y",
-    y0: range.min, y1: range.max,
-    fillcolor: "rgba(34, 197, 94, 0.20)",
-    line: {color: "rgba(34, 197, 94, 0.5)", width: 1},
-    layer: "below"
-  }] : [];
-  Plotly.react(hist, historyTraces, {...baseChartLayout(current ? `${current.latest.hood} — ${unit} history` : "Select a hood"),
-    xaxis:{title:"Inspection date",type:"date"},yaxis:{title:unit}, shapes:rangeShapes},plotConfig());
-  const comparison = document.getElementById("fleetComparisonMetric").value;
-  const fleetRows = rows.filter(r => Number.isFinite(r[comparison]))
-    .sort((a,b) => a[comparison] - b[comparison] || naturalSort(a.key,b.key));
-  // Scroll the plotting surface rather than growing the surrounding panel.
-  const plotHeight = Math.max(360, 120 + fleetRows.length * 29);
-  const selectedKey = analysisHood.value || selectedHoodKey;
-  Plotly.react(fleet, fleetRows.length ? [{type:"bar",orientation:"h",
-    x:fleetRows.map(r=>r[comparison]),
-    y:fleetRows.map(r=>`${r.latest.building} · ${r.latest.lab} · ${r.latest.hood}`),
-    marker:{color:fleetRows.map(r=>r.key === selectedKey ? "#8050c8" : "#d2e1f3")},
-    hovertext:fleetRows.map(r=>r.key),hoverinfo:"x+text"}] : [],
-    {...baseChartLayout(({value:"Latest measurement",mean:"Historical mean",pct:"Deviation from historical mean"})[comparison]),
-      height:plotHeight,
-      margin:{l:175,r:25,t:55,b:65},xaxis:{title:comparison === "pct" ? "Deviation (%)" : unit},
-      yaxis:{automargin:true,autorange:"reversed"}},
-    {...plotConfig(), responsive:false});
+    : metric === "cov"
+      ? "No green band for COV: a passing range has not been defined."
+      : "No valid green range is configured for this measurement.";
+
+  const rangeShapes = validRange
+    ? [
+        {
+          type: "rect",
+
+          xref: "paper",
+          x0: 0,
+          x1: 1,
+
+          yref: "y",
+          y0: range.min,
+          y1: range.max,
+
+          fillcolor: "rgba(34, 197, 94, 0.20)",
+
+          line: {
+            color: "rgba(34, 197, 94, 0.5)",
+            width: 1
+          },
+
+          layer: "below"
+        }
+      ]
+    : [];
+
+  // ---------------------------------------------------------
+  // Render Selected Hood History
+  // ---------------------------------------------------------
+
+  Plotly.react(
+    hist,
+    historyTraces,
+
+    {
+      ...baseChartLayout(
+        current
+          ? `${current.latest.hood} — ${unit} history`
+          : "Select a hood"
+      ),
+
+      xaxis: {
+        title: "Inspection date",
+        type: "date"
+      },
+
+      yaxis: {
+        title: unit
+      },
+
+      shapes: rangeShapes
+    },
+
+    plotConfig()
+  );
+
+  // =========================================================
+  // Fleet Comparison Chart
+  // =========================================================
+
+  const comparison =
+    document.getElementById("fleetComparisonMetric").value;
+
+  // Keep only hoods with valid comparison data.
+  const fleetRows = rows
+    .filter(r => Number.isFinite(r[comparison]))
+    .sort(
+      (a, b) =>
+        a[comparison] - b[comparison] ||
+        naturalSort(a.key, b.key)
+    );
+
+  // Keep the chart scrollable rather than allowing
+  // the surrounding panel to grow indefinitely.
+  const plotHeight = Math.max(
+    360,
+    120 + fleetRows.length * 29
+  );
+
+  // Currently selected hood.
+  const selectedKey =
+    analysisHood.value || selectedHoodKey;
+
+  // ---------------------------------------------------------
+  // Fleet Comparison Colors
+  // ---------------------------------------------------------
+
+  // Change these two values to customize the chart colors.
+
+  const selectedHoodColor = "#8050c8"; // Purple
+  const otherHoodColor = "#d2e1f3";    // Blue
+
+  // ---------------------------------------------------------
+  // Render Fleet Comparison
+  // ---------------------------------------------------------
+
+  Plotly.react(
+    fleet,
+
+    fleetRows.length
+      ? [
+          {
+            type: "bar",
+            orientation: "h",
+
+            // Comparison values.
+            x: fleetRows.map(r => r[comparison]),
+
+            // Building, lab and hood labels.
+            y: fleetRows.map(
+              r =>
+                `${r.latest.building} · ${r.latest.lab} · ${r.latest.hood}`
+            ),
+
+            // Purple for selected hood.
+            // Blue for all other hoods.
+            marker: {
+              color: fleetRows.map(r =>
+                r.key === selectedKey
+                  ? selectedHoodColor
+                  : otherHoodColor
+              )
+            },
+
+            // Hover information.
+            hovertext: fleetRows.map(r => r.key),
+            hoverinfo: "x+text"
+          }
+        ]
+      : [],
+
+    {
+      ...baseChartLayout(
+        {
+          value: "Latest measurement",
+          mean: "Historical mean",
+          pct: "Deviation from historical mean"
+        }[comparison]
+      ),
+
+      height: plotHeight,
+
+      margin: {
+        l: 175,
+        r: 25,
+        t: 55,
+        b: 65
+      },
+
+      xaxis: {
+        title:
+          comparison === "pct"
+            ? "Deviation (%)"
+            : unit
+      },
+
+      yaxis: {
+        automargin: true,
+        autorange: "reversed"
+      }
+    },
+
+    {
+      ...plotConfig(),
+      responsive: false
+    }
+  );
 }
+
+// ===========================================================
+// Performance Analysis Event Listeners
+// ===========================================================
+
+// Update analysis when measurement changes.
 analysisMetric.addEventListener("change", updateAnalysis);
-document.getElementById("fleetComparisonMetric").addEventListener("change", updateAnalysis);
+
+// Update fleet chart when comparison metric changes.
+document
+  .getElementById("fleetComparisonMetric")
+  .addEventListener("change", updateAnalysis);
+
+// -----------------------------------------------------------
+// All Hoods Table Sorting
+// -----------------------------------------------------------
+
 document.querySelectorAll("[data-analysis-sort]").forEach(th => {
   th.tabIndex = 0;
   th.setAttribute("role", "button");
+
   const sort = () => {
     if (analysisSortColumn === th.dataset.analysisSort) {
-      analysisSortDirection = analysisSortDirection === "asc" ? "desc" : "asc";
+      analysisSortDirection =
+        analysisSortDirection === "asc"
+          ? "desc"
+          : "asc";
     } else {
       analysisSortColumn = th.dataset.analysisSort;
       analysisSortDirection = "asc";
     }
+
     updateAnalysis();
   };
+
   th.addEventListener("click", sort);
+
   th.addEventListener("keydown", event => {
-    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); sort(); }
-  });
-});
-analysisHood.addEventListener("change", () => {
-  selectedHoodKey = analysisHood.value;
-  hoodFilter.value = selectedHoodKey;
-  updateTrendChart(); updateFaceVelocityChart(); updateAnalysis();
-});
-document.querySelector(".analysis-panel").addEventListener("toggle", event => {
-  if (event.target.open && activeTab === "history") requestAnimationFrame(() => {
-    for (const id of ["analysisHistoryChart","analysisFleetChart"]) {
-      const chart = document.getElementById(id);
-      if (chart.data) Plotly.Plots.resize(chart);
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      sort();
     }
   });
 });
+
+// -----------------------------------------------------------
+// Hood Selector
+// -----------------------------------------------------------
+
+analysisHood.addEventListener("change", () => {
+  selectedHoodKey = analysisHood.value;
+  hoodFilter.value = selectedHoodKey;
+
+  updateTrendChart();
+  updateFaceVelocityChart();
+  updateAnalysis();
+});
+
+// -----------------------------------------------------------
+// Resize Charts When Performance Analysis Is Expanded
+// -----------------------------------------------------------
+
+document
+  .querySelector(".analysis-panel")
+  .addEventListener("toggle", event => {
+    if (event.target.open && activeTab === "history") {
+      requestAnimationFrame(() => {
+        for (const id of [
+          "analysisHistoryChart",
+          "analysisFleetChart"
+        ]) {
+          const chart = document.getElementById(id);
+
+          if (chart.data) {
+            Plotly.Plots.resize(chart);
+          }
+        }
+      });
+    }
+  });
+
