@@ -2406,7 +2406,7 @@ function updateAnalysis() {
   Plotly.react(fleet, fleetRows.length ? [{type:"bar",orientation:"h",
     x:fleetRows.map(r=>r[comparison]),
     y:fleetRows.map(r=>`${r.latest.building} · ${r.latest.lab} · ${r.latest.hood}`),
-    marker:{color:fleetRows.map(r=>r.key === selectedKey ? "#8050c8" : "#4684ce")},
+    marker:{color:fleetRows.map(r=>r.key === selectedKey ? "#8050c8" : "#d2e1f3")},
     hovertext:fleetRows.map(r=>r.key),hoverinfo:"x+text"}] : [],
     {...baseChartLayout(({value:"Latest measurement",mean:"Historical mean",pct:"Deviation from historical mean"})[comparison]),
       height:plotHeight,
