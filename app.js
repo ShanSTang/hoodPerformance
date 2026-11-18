@@ -2210,6 +2210,8 @@ Plotly.newPlot(
 const analysisMetric = document.getElementById("analysisMetric");
 const analysisHood = document.getElementById("analysisHood");
 let activeTab = "summary";
+let analysisSortColumn = "pct";
+let analysisSortDirection = "asc";
 
 document.querySelectorAll(".dashboard-tab").forEach(button => {
   button.addEventListener("click", () => {
@@ -2240,19 +2242,17 @@ document.querySelectorAll(".dashboard-tab").forEach(button => {
 });
 
 function updateWorstPerformers() {
-  const ach = [...summary].filter(r => Number.isFinite(r.latestACH))
-    .sort((a, b) => a.latestACH - b.latestACH).slice(0, 5);
-  const limits = greenBoxRanges.faceVelocity;
-  const velocity = [...summary].filter(r => Number.isFinite(r.latestFaceVelocity))
-    .sort((a, b) => {
-      const distance = v => v < limits.min ? limits.min - v : v > limits.max ? v - limits.max : 0;
-      return distance(b.latestFaceVelocity) - distance(a.latestFaceVelocity) ||
-        a.latestFaceVelocity - b.latestFaceVelocity;
-    }).slice(0, 5);
+  const velocity = summary.filter(r => Number.isFinite(r.latestFaceVelocity))
+    .sort((a,b) => a.latestFaceVelocity - b.latestFaceVelocity || naturalSort(a.hoodKey,b.hoodKey));
+  // COV can be missing from an inspection: use the latest valid COV for each hood.
+  const covByHood = new Map();
+  [...filteredRecords].sort((a,b) => a.date - b.date || a.rowNumber - b.rowNumber)
+    .forEach(r => { if (Number.isFinite(r.cov)) covByHood.set(r.hoodKey,r); });
+  const cov = [...covByHood.values()].sort((a,b) => b.cov - a.cov || naturalSort(a.hoodKey,b.hoodKey));
   function render(id, rows, field, digits, unit) {
     document.getElementById(id).innerHTML = rows.length ? rows.map(row => `
       <button type="button" class="worst-row" data-hood="${escapeHTML(row.hoodKey)}">
-        <span><strong>${escapeHTML(row.hood)}</strong><small>${escapeHTML(row.building)} · ${escapeHTML(row.lab)}</small></span>
+        <span><strong>${escapeHTML(row.hood)}</strong><small>${escapeHTML(row.building)} · ${escapeHTML(row.lab)} · ${formatDate(row.date || row.latestInspection)}</small></span>
         <span class="worst-value">${formatNumber(row[field], digits)} ${unit}</span>
       </button>`).join("") : '<p class="muted">No matching measurements.</p>';
     document.querySelectorAll(`#${id} .worst-row`).forEach(button => {
@@ -2265,8 +2265,8 @@ function updateWorstPerformers() {
       });
     });
   }
-  render("worstACH", ach, "latestACH", 1, "ACH");
   render("worstVelocity", velocity, "latestFaceVelocity", 1, "fpm");
+  render("worstCOV", cov, "cov", 1, "%");
 }
 
 function getAnalysisRows() {
@@ -2285,7 +2285,10 @@ function getAnalysisRows() {
     const value = latest[metric];
     const deviation = mean !== null ? value - mean : null;
     const pct = mean !== null && mean !== 0 ? 100 * deviation / Math.abs(mean) : null;
-    return {key, latest, records, mean, value, deviation, pct};
+    const sampleStdDev = previous.length >= 2 ? Math.sqrt(
+      previous.reduce((sum,r) => sum + (r[metric] - mean) ** 2,0) / (previous.length - 1)
+    ) : null;
+    return {key, latest, records, mean, value, deviation, pct, sampleStdDev};
   });
 }
 
@@ -2304,21 +2307,34 @@ function updateAnalysis() {
   document.getElementById("analysisMean").textContent = current ? fmt(current.mean) : "—";
   document.getElementById("analysisDeviation").textContent = current && Number.isFinite(current.pct) ?
     `${current.pct > 0 ? "+" : ""}${formatNumber(current.pct, 1)}% (${fmt(current.deviation)})` : "—";
-  const ranked = rows.filter(r => Number.isFinite(metric === "cov" ? r.value : r.pct))
-    .sort((a,b) => metric === "cov" ? b.value - a.value : a.pct - b.pct);
-  const rank = current ? ranked.findIndex(r => r.key === current.key) : -1;
-  document.getElementById("analysisRank").textContent = rank >= 0 ? `${rank + 1} / ${ranked.length}` : "—";
+  document.getElementById("analysisStdDev").textContent = current ? fmt(current.sampleStdDev) : "—";
   document.getElementById("analysisInfo").textContent = current ?
     `${current.records.length} valid ${unit} measurements; ${Math.max(0,current.records.length - 1)} used for historical mean. ${formatDate(current.latest.date)} is the latest valid test.` :
     "Select a hood to view its historical statistics.";
+  const sortedRows = rows.slice().sort((a,b) => {
+    const col = analysisSortColumn;
+    let av = col === "date" ? a.latest.date.getTime() :
+      ["building","lab","hood"].includes(col) ? a.latest[col] : a[col];
+    let bv = col === "date" ? b.latest.date.getTime() :
+      ["building","lab","hood"].includes(col) ? b.latest[col] : b[col];
+    const aMissing = av === null || av === undefined || (typeof av === "number" && !Number.isFinite(av));
+    const bMissing = bv === null || bv === undefined || (typeof bv === "number" && !Number.isFinite(bv));
+    if (aMissing !== bMissing) return aMissing ? 1 : -1;
+    let cmp = aMissing ? 0 : typeof av === "string" ? naturalSort(av,bv) : av - bv;
+    return (analysisSortDirection === "asc" ? cmp : -cmp) || naturalSort(a.key,b.key);
+  });
   document.getElementById("analysisBody").innerHTML = rows.length ?
-    rows.slice().sort((a,b) => metric === "cov" ? b.value - a.value :
-      (Number.isFinite(a.pct) ? a.pct : Infinity) - (Number.isFinite(b.pct) ? b.pct : Infinity))
-      .map(r => `<tr><td>${escapeHTML(r.latest.building)}</td><td>${escapeHTML(r.latest.lab)}</td>
+    sortedRows.map(r => `<tr><td>${escapeHTML(r.latest.building)}</td><td>${escapeHTML(r.latest.lab)}</td>
       <td><button type="button" class="table-hood-button analysis-select" data-hood="${escapeHTML(r.key)}">${escapeHTML(r.latest.hood)}</button></td>
       <td>${fmt(r.value)}</td><td>${fmt(r.mean)}</td><td>${Number.isFinite(r.pct) ? `${r.pct > 0 ? "+" : ""}${formatNumber(r.pct,1)}%` : "—"}</td>
       <td>${formatDate(r.latest.date)}</td></tr>`).join("") :
     '<tr><td colspan="7" class="empty-cell">No measurements match the current filters.</td></tr>';
+  document.querySelectorAll("[data-analysis-sort]").forEach(th => {
+    th.classList.toggle("sort-asc", th.dataset.analysisSort === analysisSortColumn && analysisSortDirection === "asc");
+    th.classList.toggle("sort-desc", th.dataset.analysisSort === analysisSortColumn && analysisSortDirection === "desc");
+    th.setAttribute("aria-sort", th.dataset.analysisSort === analysisSortColumn ?
+      (analysisSortDirection === "asc" ? "ascending" : "descending") : "none");
+  });
   document.querySelectorAll(".analysis-select").forEach(button => button.addEventListener("click", () => {
     analysisHood.value = button.dataset.hood;
     selectedHoodKey = button.dataset.hood;
@@ -2334,17 +2350,37 @@ function updateAnalysis() {
     line:{dash:"dash",color:"#2864dc"}});
   Plotly.react(hist, historyTraces, {...baseChartLayout(current ? `${current.latest.hood} — ${unit} history` : "Select a hood"),
     xaxis:{title:"Inspection date",type:"date"},yaxis:{title:unit}},plotConfig());
-  const fleetRows = metric === "cov" ? rows.slice().sort((a,b)=>b.value-a.value).slice(0,25) :
-    rows.filter(r=>Number.isFinite(r.pct)).sort((a,b)=>a.pct-b.pct).slice(0,25);
+  const comparison = document.getElementById("fleetComparisonMetric").value;
+  const fleetRows = rows.filter(r => Number.isFinite(r[comparison]))
+    .sort((a,b) => a[comparison] - b[comparison] || naturalSort(a.key,b.key));
   Plotly.react(fleet, fleetRows.length ? [{type:"bar",orientation:"h",
-    x:fleetRows.map(r=>metric === "cov" ? r.value : r.pct),
-    y:fleetRows.map(r=>`${r.latest.lab} · ${r.latest.hood}`),
+    x:fleetRows.map(r=>r[comparison]),
+    y:fleetRows.map(r=>`${r.latest.building} · ${r.latest.lab} · ${r.latest.hood}`),
     hovertext:fleetRows.map(r=>r.key),hoverinfo:"x+text"}] : [],
-    {...baseChartLayout(metric === "cov" ? "Latest COV by hood" : "Deviation from historical mean"),
-      margin:{l:145,r:25,t:55,b:65},xaxis:{title:metric === "cov" ? "COV (%)" : "Deviation (%)"},
+    {...baseChartLayout(({value:"Latest measurement",mean:"Historical mean",pct:"Deviation from historical mean"})[comparison]),
+      height:Math.max(320,Math.min(1100, 100 + fleetRows.length * 23)),
+      margin:{l:175,r:25,t:55,b:65},xaxis:{title:comparison === "pct" ? "Deviation (%)" : unit},
       yaxis:{automargin:true,autorange:"reversed"}},plotConfig());
 }
 analysisMetric.addEventListener("change", updateAnalysis);
+document.getElementById("fleetComparisonMetric").addEventListener("change", updateAnalysis);
+document.querySelectorAll("[data-analysis-sort]").forEach(th => {
+  th.tabIndex = 0;
+  th.setAttribute("role", "button");
+  const sort = () => {
+    if (analysisSortColumn === th.dataset.analysisSort) {
+      analysisSortDirection = analysisSortDirection === "asc" ? "desc" : "asc";
+    } else {
+      analysisSortColumn = th.dataset.analysisSort;
+      analysisSortDirection = "asc";
+    }
+    updateAnalysis();
+  };
+  th.addEventListener("click", sort);
+  th.addEventListener("keydown", event => {
+    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); sort(); }
+  });
+});
 analysisHood.addEventListener("change", () => {
   selectedHoodKey = analysisHood.value;
   hoodFilter.value = selectedHoodKey;
