@@ -1101,17 +1101,7 @@ function updateTable() {
 
       button.addEventListener("click", () => {
 
-        selectedHoodKey = button.dataset.hoodKey;
-
-        hoodFilter.value = selectedHoodKey;
-
-        updateTrendChart();
-        updateFaceVelocityChart();
-
-        trendChart.scrollIntoView({
-          behavior: "smooth",
-          block: "center"
-        });
+        selectHoodAndShowHistory(button.dataset.hoodKey);
       });
     });
 }
@@ -1892,6 +1882,7 @@ document.getElementById("updateGreenBox").onclick = () => {
     updateHeatmapChart();
     updateYearlyPassSummary();
    updateWorstPerformers();
+  updateAnalysis();
 };
 
 
@@ -2241,31 +2232,71 @@ document.querySelectorAll(".dashboard-tab").forEach(button => {
   });
 });
 
+// Keep the ACH, face velocity, and performance analysis selections synchronized.
+function selectHoodAndShowHistory(hoodKey) {
+  selectedHoodKey = hoodKey;
+  hoodFilter.value = hoodKey;
+  analysisHood.value = hoodKey;
+  document.querySelector('[data-tab="history"]').click();
+  document.querySelector(".analysis-panel").open = true;
+  updateTrendChart();
+  updateFaceVelocityChart();
+  updateAnalysis();
+  requestAnimationFrame(() => {
+    document.querySelector(".analysis-panel").scrollIntoView({behavior: "smooth", block: "start"});
+  });
+}
+
 function updateWorstPerformers() {
-  const velocity = summary.filter(r => Number.isFinite(r.latestFaceVelocity))
-    .sort((a,b) => a.latestFaceVelocity - b.latestFaceVelocity || naturalSort(a.hoodKey,b.hoodKey));
-  // COV can be missing from an inspection: use the latest valid COV for each hood.
+  const { min, max } = greenBoxRanges.faceVelocity;
+  const velocity = summary
+    .filter(row => Number.isFinite(row.latestFaceVelocity))
+    .map(row => ({
+      ...row,
+      velocityGroup: row.latestFaceVelocity < min ? 0 :
+        row.latestFaceVelocity > max ? 1 : 2
+    }))
+    .sort((a, b) => {
+      if (a.velocityGroup !== b.velocityGroup) return a.velocityGroup - b.velocityGroup;
+      const difference = a.velocityGroup === 1
+        ? b.latestFaceVelocity - a.latestFaceVelocity
+        : a.latestFaceVelocity - b.latestFaceVelocity;
+      return difference || naturalSort(a.hoodKey, b.hoodKey);
+    });
+
+  // Use the latest inspection containing a valid COV for each hood.
   const covByHood = new Map();
-  [...filteredRecords].sort((a,b) => a.date - b.date || a.rowNumber - b.rowNumber)
-    .forEach(r => { if (Number.isFinite(r.cov)) covByHood.set(r.hoodKey,r); });
-  const cov = [...covByHood.values()].sort((a,b) => b.cov - a.cov || naturalSort(a.hoodKey,b.hoodKey));
-  function render(id, rows, field, digits, unit) {
-    document.getElementById(id).innerHTML = rows.length ? rows.map(row => `
-      <button type="button" class="worst-row" data-hood="${escapeHTML(row.hoodKey)}">
-        <span><strong>${escapeHTML(row.hood)}</strong><small>${escapeHTML(row.building)} · ${escapeHTML(row.lab)} · ${formatDate(row.date || row.latestInspection)}</small></span>
-        <span class="worst-value">${formatNumber(row[field], digits)} ${unit}</span>
-      </button>`).join("") : '<p class="muted">No matching measurements.</p>';
+  [...filteredRecords]
+    .sort((a, b) => a.date - b.date || a.rowNumber - b.rowNumber)
+    .forEach(row => {
+      if (Number.isFinite(row.cov)) covByHood.set(row.hoodKey, row);
+    });
+  const cov = [...covByHood.values()]
+    .sort((a, b) => b.cov - a.cov || naturalSort(a.hoodKey, b.hoodKey));
+
+  function render(id, rows, field, digits, unit, colored = false) {
+    document.getElementById(id).innerHTML = rows.length ? rows.map(row => {
+      const groupClass = colored
+        ? ["velocity-low", "velocity-high", "velocity-good"][row.velocityGroup]
+        : "";
+      return `
+        <button type="button" class="worst-row ${groupClass}" data-hood="${escapeHTML(row.hoodKey)}">
+          <span>
+            <strong>${escapeHTML(row.hood)}</strong>
+            <small>${escapeHTML(row.building)} · ${escapeHTML(row.lab)} · ${formatDate(row.date || row.latestInspection)}</small>
+          </span>
+          <span class="worst-value">${formatNumber(row[field], digits)} ${unit}</span>
+        </button>`;
+    }).join("") : '<p class="muted">No matching measurements.</p>';
+
     document.querySelectorAll(`#${id} .worst-row`).forEach(button => {
       button.addEventListener("click", () => {
-        selectedHoodKey = button.dataset.hood;
-        hoodFilter.value = selectedHoodKey;
-        analysisHood.value = selectedHoodKey;
-        document.querySelector('[data-tab="history"]').click();
-        updateTrendChart(); updateFaceVelocityChart(); updateAnalysis();
+        selectHoodAndShowHistory(button.dataset.hood);
       });
     });
   }
-  render("worstVelocity", velocity, "latestFaceVelocity", 1, "fpm");
+
+  render("worstVelocity", velocity, "latestFaceVelocity", 1, "fpm", true);
   render("worstCOV", cov, "cov", 1, "%");
 }
 
@@ -2348,19 +2379,40 @@ function updateAnalysis() {
   if (current && Number.isFinite(current.mean)) historyTraces.push({type:"scatter",mode:"lines",
     name:"Historical mean",x:[current.records[0].date,current.latest.date],y:[current.mean,current.mean],
     line:{dash:"dash",color:"#2864dc"}});
+  // Use the same user-configured green bands as the original trend charts.
+  // COV has no defined passing range, so it is intentionally unshaded.
+  const range = metric === "ach" || metric === "faceVelocity" ? greenBoxRanges[metric] : null;
+  const validRange = range && Number.isFinite(range.min) && Number.isFinite(range.max) && range.min < range.max;
+  const rangeNote = document.getElementById("analysisRangeNote");
+  rangeNote.textContent = validRange
+    ? `Green band: ${formatNumber(range.min, 2)}–${formatNumber(range.max, 2)} ${unit} (configured on Summary).`
+    : metric === "cov" ? "No green band for COV: a passing range has not been defined."
+    : "No valid green range is configured for this measurement.";
+  const rangeShapes = validRange ? [{
+    type: "rect", xref: "paper", x0: 0, x1: 1, yref: "y",
+    y0: range.min, y1: range.max,
+    fillcolor: "rgba(34, 197, 94, 0.20)",
+    line: {color: "rgba(34, 197, 94, 0.5)", width: 1},
+    layer: "below"
+  }] : [];
   Plotly.react(hist, historyTraces, {...baseChartLayout(current ? `${current.latest.hood} — ${unit} history` : "Select a hood"),
-    xaxis:{title:"Inspection date",type:"date"},yaxis:{title:unit}},plotConfig());
+    xaxis:{title:"Inspection date",type:"date"},yaxis:{title:unit}, shapes:rangeShapes},plotConfig());
   const comparison = document.getElementById("fleetComparisonMetric").value;
   const fleetRows = rows.filter(r => Number.isFinite(r[comparison]))
     .sort((a,b) => a[comparison] - b[comparison] || naturalSort(a.key,b.key));
+  // Scroll the plotting surface rather than growing the surrounding panel.
+  const plotHeight = Math.max(360, 120 + fleetRows.length * 29);
+  const selectedKey = analysisHood.value || selectedHoodKey;
   Plotly.react(fleet, fleetRows.length ? [{type:"bar",orientation:"h",
     x:fleetRows.map(r=>r[comparison]),
     y:fleetRows.map(r=>`${r.latest.building} · ${r.latest.lab} · ${r.latest.hood}`),
+    marker:{color:fleetRows.map(r=>r.key === selectedKey ? "#8050c8" : "#4684ce")},
     hovertext:fleetRows.map(r=>r.key),hoverinfo:"x+text"}] : [],
     {...baseChartLayout(({value:"Latest measurement",mean:"Historical mean",pct:"Deviation from historical mean"})[comparison]),
-      height:Math.max(320,Math.min(1100, 100 + fleetRows.length * 23)),
+      height:plotHeight,
       margin:{l:175,r:25,t:55,b:65},xaxis:{title:comparison === "pct" ? "Deviation (%)" : unit},
-      yaxis:{automargin:true,autorange:"reversed"}},plotConfig());
+      yaxis:{automargin:true,autorange:"reversed"}},
+    {...plotConfig(), responsive:false});
 }
 analysisMetric.addEventListener("change", updateAnalysis);
 document.getElementById("fleetComparisonMetric").addEventListener("change", updateAnalysis);
