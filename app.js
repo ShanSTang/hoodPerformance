@@ -902,6 +902,7 @@ function updateAllVisuals() {
   updateKPIs();
   updateHoodSelector();
   updateTable();
+  updateBuildingComparison();
   updateTrendChart();
   updateFaceVelocityChart();
   updateHeatmapChart();
@@ -914,6 +915,142 @@ function updateHeatmap() {
   updateHeatmapChart();
 }
 
+
+/* ---------------------------------------------------------
+   Building Performance Comparison
+   --------------------------------------------------------- */
+
+let buildingComparisonSort = "building";
+let buildingComparisonDirection = "asc";
+
+function calculateBuildingComparison() {
+  // Compare every building, regardless of building/lab selections.
+  // Date limits still apply to the comparison.
+  const start = startDate.value
+    ? new Date(`${startDate.value}T00:00:00`) : null;
+  const end = endDate.value
+    ? new Date(`${endDate.value}T23:59:59.999`) : null;
+
+  const records = allRecords.filter(record =>
+    (!start || record.date >= start) &&
+    (!end || record.date <= end)
+  ).sort((a, b) => a.date - b.date || a.rowNumber - b.rowNumber);
+
+  const hoods = new Map();
+  const buildings = new Map();
+  for (const record of records) {
+    if (!hoods.has(record.hoodKey)) hoods.set(record.hoodKey, []);
+    hoods.get(record.hoodKey).push(record);
+    if (!buildings.has(record.building)) {
+      buildings.set(record.building, {
+        building: record.building, hoodCount: 0,
+        velocityTotal: 0, velocityCount: 0, lowVelocityCount: 0,
+        covTotal: 0, covCount: 0,
+        achCount: 0, unsatisfactoryAchCount: 0
+      });
+    }
+  }
+
+  for (const hoodRecords of hoods.values()) {
+    const stats = buildings.get(hoodRecords[0].building);
+    stats.hoodCount++;
+    const latest = field => {
+      for (let i = hoodRecords.length - 1; i >= 0; i--) {
+        if (Number.isFinite(hoodRecords[i][field])) {
+          return hoodRecords[i][field];
+        }
+      }
+      return null;
+    };
+
+    const velocity = latest("faceVelocity");
+    if (velocity !== null) {
+      stats.velocityTotal += velocity;
+      stats.velocityCount++;
+      if (velocity < greenBoxRanges.faceVelocity.min) stats.lowVelocityCount++;
+    }
+
+    const cov = latest("cov");
+    if (cov !== null) {
+      stats.covTotal += cov;
+      stats.covCount++;
+    }
+
+    const ach = latest("ach");
+    if (ach !== null) {
+      stats.achCount++;
+      if (ach < greenBoxRanges.ach.min || ach > greenBoxRanges.ach.max) {
+        stats.unsatisfactoryAchCount++;
+      }
+    }
+  }
+
+  return [...buildings.values()].map(s => ({
+    building: s.building,
+    hoodCount: s.hoodCount,
+    avgVelocity: s.velocityCount ? s.velocityTotal / s.velocityCount : null,
+    lowVelocityPct: s.velocityCount ? 100 * s.lowVelocityCount / s.velocityCount : null,
+    vavCov: s.covCount ? s.covTotal / s.covCount : null,
+    unsatisfactoryAchPct: s.achCount ? 100 * s.unsatisfactoryAchCount / s.achCount : null
+  }));
+}
+
+function updateBuildingComparison() {
+  const body = document.getElementById("buildingComparisonBody");
+  if (!body) return;
+  const rows = calculateBuildingComparison();
+  rows.sort((a, b) => {
+    const av = a[buildingComparisonSort];
+    const bv = b[buildingComparisonSort];
+    if (av == null || bv == null) {
+      if (av == null && bv != null) return 1;
+      if (bv == null && av != null) return -1;
+    }
+    const cmp = typeof av === "string" ? naturalSort(av, bv) : (av - bv);
+    return (buildingComparisonDirection === "asc" ? cmp : -cmp) ||
+      naturalSort(a.building, b.building);
+  });
+
+  const number = (value, digits = 1) =>
+    Number.isFinite(value) ? formatNumber(value, digits) : "—";
+  const percent = value => Number.isFinite(value) ? `${number(value)}%` : "—";
+  const risk = value => !Number.isFinite(value) ? "" :
+    value >= 25 ? "building-risk-high" :
+    value >= 10 ? "building-risk-medium" : "building-risk-low";
+
+  body.innerHTML = rows.length ? rows.map(r => `
+    <tr>
+      <td><strong>${escapeHTML(r.building)}</strong></td>
+      <td>${r.hoodCount}</td>
+      <td>${number(r.avgVelocity)}</td>
+      <td class="${risk(r.lowVelocityPct)}">${percent(r.lowVelocityPct)}</td>
+      <td>${percent(r.vavCov)}</td>
+      <td class="${risk(r.unsatisfactoryAchPct)}">${percent(r.unsatisfactoryAchPct)}</td>
+    </tr>
+  `).join("") :
+    '<tr><td colspan="6" class="empty-cell">No buildings match the selected date range.</td></tr>';
+
+  document.querySelectorAll("[data-building-sort]").forEach(th => {
+    const active = th.dataset.buildingSort === buildingComparisonSort;
+    th.classList.toggle("sort-asc", active && buildingComparisonDirection === "asc");
+    th.classList.toggle("sort-desc", active && buildingComparisonDirection === "desc");
+    th.setAttribute("aria-sort", active ?
+      (buildingComparisonDirection === "asc" ? "ascending" : "descending") : "none");
+  });
+}
+
+document.querySelectorAll("[data-building-sort]").forEach(th => {
+  th.addEventListener("click", () => {
+    const column = th.dataset.buildingSort;
+    if (buildingComparisonSort === column) {
+      buildingComparisonDirection = buildingComparisonDirection === "asc" ? "desc" : "asc";
+    } else {
+      buildingComparisonSort = column;
+      buildingComparisonDirection = "asc";
+    }
+    updateBuildingComparison();
+  });
+});
 
 /* ---------------------------------------------------------
    KPIs
@@ -2966,4 +3103,3 @@ document
       });
     }
   });
-
