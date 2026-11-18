@@ -240,6 +240,32 @@
      <div class="chart heatmap-chart" id="heatmapChart">
      </div>
     </section>
+     <section class="panel building-comparison-panel" aria-labelledby="buildingComparisonTitle">
+      <div class="section-heading">
+       <div>
+        <h2 id="buildingComparisonTitle">Building Performance Comparison</h2>
+        <p class="muted">All buildings in the uploaded data · latest valid measurement per hood · selected date range</p>
+       </div>
+      </div>
+      <div class="table-scroll">
+       <table class="building-comparison-table">
+        <thead>
+         <tr>
+          <th data-building-sort="building" aria-sort="ascending">Building</th>
+          <th data-building-sort="hoodCount">Hoods</th>
+          <th data-building-sort="avgVelocity">Avg. Face Velocity (fpm)</th>
+          <th data-building-sort="lowVelocityPct">Below Green FV (%)</th>
+          <th data-building-sort="vavCov">Avg. VAV COV (%)</th>
+          <th data-building-sort="unsatisfactoryAchPct">Unsatisfactory ACH (%)</th>
+         </tr>
+        </thead>
+        <tbody id="buildingComparisonBody">
+         <tr><td colspan="6" class="empty-cell">Upload inspection data to compare buildings.</td></tr>
+        </tbody>
+       </table>
+      </div>
+      <p class="muted small building-comparison-note">Percentages exclude hoods without a valid measurement for that metric. Lower COV indicates more stable airflow.</p>
+     </section>
     <section class="panel">
      <div class="section-heading">
       <div>
@@ -505,4 +531,3 @@
   </main>
  </body>
 </html>
-
