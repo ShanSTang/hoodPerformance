@@ -1908,30 +1908,30 @@ exportBtn.addEventListener("click", () => {
 
       // 6-9: ACH
       "Average ACH": ach.mean,
-      "Standard Deviation of ACH": ach.stdDev,
+      "Stnd of ACH": ach.stdDev,
       "Latest ACH": ach.latest,
-      "Deviation from Mean - Latest ACH":
+      "Mean vs Latest ACH":
         ach.deviation,
 
       // 10-13: Face velocity
-      "Average Face Velocity": velocity.mean,
-      "Standard Deviation of Face Velocity":
+      "Avg Face Vel.": velocity.mean,
+      "Stnd of Face Vel.":
         velocity.stdDev,
-      "Latest Face Velocity": velocity.latest,
-      "Deviation from Mean - Latest Face Velocity":
+      "Latest Face Vel.": velocity.latest,
+      "Mean vs Latest Face Vel.":
         velocity.deviation,
 
       // 14-17: COV
       "Average COV": cov.mean,
-      "Standard Deviation of COV": cov.stdDev,
+      "Stnd of COV": cov.stdDev,
       "Latest COV": cov.latest,
-      "Deviation from Mean - Latest COV":
+      "Mean vs Latest COV":
         cov.deviation,
 
       // 18-20: Latest year versus previous available year
       "Current ACH vs Previous ACH":
         ach.yearComparison,
-      "Current Face Velocity vs Previous Face Velocity":
+      "Current Face Vel. vs Previous Face Vel.":
         velocity.yearComparison,
       "Current COV vs Previous COV":
         cov.yearComparison,
