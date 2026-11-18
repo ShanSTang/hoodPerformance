@@ -345,6 +345,25 @@ function validateColumns(rows) {
 function parseRows(rows) {
   const parsed = [];
 
+  // Find optional spreadsheet columns even if their
+  // capitalization, spacing, or underscores differ.
+  function getOptionalColumn(row, names) {
+    const normalize = value =>
+      String(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+
+    for (const name of names) {
+      const key = Object.keys(row).find(
+        column => normalize(column) === normalize(name)
+      );
+
+      if (key !== undefined) {
+        return normalizeValue(row[key]);
+      }
+    }
+
+    return "";
+  }
+
   rows.forEach((row, index) => {
     const building = normalizeValue(
       row["Building"],
@@ -364,36 +383,51 @@ function parseRows(rows) {
     const date = parseDate(row["Date"]);
     const ach = parseACH(row["Min ACH"]);
     const cov = parsePercentage(row["Average_Zone_COV"]);
-    const faceVelocity = parseACH(row["FaceV Avg"]); 
+    const faceVelocity = parseACH(row["FaceV Avg"]);
 
+    // Read metadata from the original inspection sheet.
+    const exhaustType = getOptionalColumn(row, [
+      "Exhaust Type",
+      "Exhaust_Type",
+      "ExhaustType"
+    ]);
+
+    const totalArea = getOptionalColumn(row, [
+      "Total Area",
+      "Total_Area",
+      "TotalArea"
+    ]);
+
+    // Keep the same record-validation rules.
     if (
-        !date ||
-        (!Number.isFinite(ach) && !Number.isFinite(faceVelocity))
-      ) {
-        return;
-      }
+      !date ||
+      (!Number.isFinite(ach) &&
+       !Number.isFinite(faceVelocity))
+    ) {
+      return;
+    }
 
-    /*
-     * Equivalent to:
-     *
-     * df["Hood Key"] =
-     * Building ID + " | " + Lab ID + " | " + Hood ID
-     */
-    const hoodKey =
-      `${building} | ${lab} | ${hood}`;
+    // Unique hood identifier.
+    const hoodKey = `${building} | ${lab} | ${hood}`;
 
     parsed.push({
-        rowNumber: index + 2,
-        building,
-        lab,
-        hood,
-        date,
-        dateString: dateKey(date),
-        ach: Number.isFinite(ach) ? ach : null,
-        faceVelocity: Number.isFinite(faceVelocity) ? faceVelocity : null,
-        cov: Number.isFinite(cov) ? cov : null,
-        hoodKey
-      });
+      rowNumber: index + 2,
+      building,
+      lab,
+      hood,
+      date,
+      dateString: dateKey(date),
+
+      ach: Number.isFinite(ach) ? ach : null,
+      faceVelocity: Number.isFinite(faceVelocity)
+        ? faceVelocity
+        : null,
+      cov: Number.isFinite(cov) ? cov : null,
+
+      exhaustType,
+      totalArea,
+      hoodKey
+    });
   });
 
   return parsed;
@@ -1743,99 +1777,182 @@ function updateYearlyPassSummary() {
   `;
 }
 
+
 /* ---------------------------------------------------------
    Export
    --------------------------------------------------------- */
 
-exportBtn.addEventListener("click", () => {
+// Calculate statistics for one hood and one measurement.
+function exportMetricStats(records, metric) {
+  const valid = records
+    .filter(r => Number.isFinite(r[metric]))
+    .sort((a, b) =>
+      a.date - b.date || a.rowNumber - b.rowNumber
+    );
 
+  if (!valid.length) {
+    return {
+      mean: "",
+      stdDev: "",
+      latest: "",
+      deviation: "",
+      yearComparison: ""
+    };
+  }
+
+  const latest = valid[valid.length - 1];
+
+  // Historical baseline: every valid inspection except
+  // the latest, matching Performance Analysis.
+  const history = valid.slice(0, -1);
+
+  const mean = history.length
+    ? history.reduce(
+        (sum, r) => sum + r[metric],
+        0
+      ) / history.length
+    : null;
+
+  // Historical sample standard deviation (n - 1).
+  const stdDev = history.length >= 2
+    ? Math.sqrt(
+        history.reduce(
+          (sum, r) => sum + (r[metric] - mean) ** 2,
+          0
+        ) / (history.length - 1)
+      )
+    : null;
+
+  const deviation = mean !== null
+    ? latest[metric] - mean
+    : null;
+
+  // Keep the latest valid measurement in each year.
+  const latestByYear = new Map();
+
+  valid.forEach(record => {
+    latestByYear.set(
+      record.date.getFullYear(),
+      record
+    );
+  });
+
+  const years = [...latestByYear.keys()]
+    .sort((a, b) => b - a);
+
+  // Compare the most recent year with the preceding
+  // available year, not two tests in the same year.
+  const yearComparison = years.length >= 2
+    ? latestByYear.get(years[0])[metric] -
+      latestByYear.get(years[1])[metric]
+    : "";
+
+  return {
+    mean: mean ?? "",
+    stdDev: stdDev ?? "",
+    latest: latest[metric],
+    deviation: deviation ?? "",
+    yearComparison
+  };
+}
+
+// Export one summary row per hood.
+exportBtn.addEventListener("click", () => {
   if (!summary.length) {
     return;
   }
 
+  // Group currently filtered inspections by hood.
+  const grouped = new Map();
+
+  filteredRecords.forEach(record => {
+    if (!grouped.has(record.hoodKey)) {
+      grouped.set(record.hoodKey, []);
+    }
+
+    grouped.get(record.hoodKey).push(record);
+  });
 
   const exportRows = summary.map(row => {
+    const records = (grouped.get(row.hoodKey) || [])
+      .slice()
+      .sort((a, b) =>
+        a.date - b.date || a.rowNumber - b.rowNumber
+      );
 
-    const status =
-      getFaceVelocityDeteriorationStatus(row.hoodKey);
+    const ach = exportMetricStats(records, "ach");
+    const velocity = exportMetricStats(
+      records,
+      "faceVelocity"
+    );
+    const cov = exportMetricStats(records, "cov");
 
+    // Use the latest nonblank metadata for this hood.
+    const latestMetadata = field => {
+      const record = [...records].reverse().find(
+        r => r[field] !== null &&
+             r[field] !== undefined &&
+             r[field] !== ""
+      );
+
+      return record ? record[field] : "";
+    };
 
     return {
-      "Hood Key": row.hoodKey,
+      // 1-5: Identification
+      "Hood ID": row.hoodKey,
       "Building ID": row.building,
       "Lab ID": row.lab,
-      "Hood ID": row.hood,
+      "First Test Date": dateKey(row.firstInspection),
+      "Latest Test Date": dateKey(row.latestInspection),
 
-      "First Inspection":
-        dateKey(row.firstInspection),
+      // 6-9: ACH
+      "Average ACH": ach.mean,
+      "Standard Deviation of ACH": ach.stdDev,
+      "Latest ACH": ach.latest,
+      "Deviation from Mean - Latest ACH":
+        ach.deviation,
 
-      "Latest Inspection":
-        dateKey(row.latestInspection),
+      // 10-13: Face velocity
+      "Average Face Velocity": velocity.mean,
+      "Standard Deviation of Face Velocity":
+        velocity.stdDev,
+      "Latest Face Velocity": velocity.latest,
+      "Deviation from Mean - Latest Face Velocity":
+        velocity.deviation,
 
-      "Baseline ACH":
-        row.baselineACH,
+      // 14-17: COV
+      "Average COV": cov.mean,
+      "Standard Deviation of COV": cov.stdDev,
+      "Latest COV": cov.latest,
+      "Deviation from Mean - Latest COV":
+        cov.deviation,
 
-      "Latest ACH":
-        row.latestACH,
+      // 18-20: Latest year versus previous available year
+      "Current ACH vs Previous ACH":
+        ach.yearComparison,
+      "Current Face Velocity vs Previous Face Velocity":
+        velocity.yearComparison,
+      "Current COV vs Previous COV":
+        cov.yearComparison,
 
-      "Previous ACH":
-        row.previousACH,
-
-      "ACH Drop vs Previous":
-        row.achDropPrevious,
-
-      "ACH Drop % vs Previous":
-        row.achDropPercentPrevious,
-
-      "ACH Drop vs Baseline":
-        row.achDropBaseline,
-
-      "ACH Drop % vs Baseline":
-        row.achDropPercentBaseline,
-
-      "Inspection Count":
-        row.inspectionCount,
-
-      "Trend Available":
-        row.trendAvailable,
-
-      "Flagged":
-        status.flagged,
-
-      "Flag Reason":
-        (status.flagged ? "Previously in range; latest outside range" : "Not flagged")
+      // 21-22: Uploaded metadata
+      "Exhaust Type": latestMetadata("exhaustType"),
+      "Total Area": latestMetadata("totalArea")
     };
   });
 
-
-  const worksheet =
-    XLSX.utils.json_to_sheet(exportRows);
-
-  const workbook =
-    XLSX.utils.book_new();
-
-  XLSX.utils.book_append_sheet(
-    workbook,
-    worksheet,
-    "Hood Summary"
-  );
-
-
-  const csv =
-    XLSX.utils.sheet_to_csv(worksheet);
-
+  // Generate CSV using SheetJS.
+  const worksheet = XLSX.utils.json_to_sheet(exportRows);
+  const csv = XLSX.utils.sheet_to_csv(worksheet);
 
   const blob = new Blob(
     [csv],
     { type: "text/csv;charset=utf-8;" }
   );
 
-
-  const url =
-    URL.createObjectURL(blob);
-
-  const link =
-    document.createElement("a");
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
 
   link.href = url;
   link.download =
@@ -1847,7 +1964,6 @@ exportBtn.addEventListener("click", () => {
 
   URL.revokeObjectURL(url);
 });
-
 
 /* ---------------------------------------------------------
    Event listeners
