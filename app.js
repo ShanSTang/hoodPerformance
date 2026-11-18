@@ -2134,8 +2134,9 @@ document.getElementById("updateGreenBox").onclick = () => {
     updateFaceVelocityChart();
     updateHeatmapChart();
     updateYearlyPassSummary();
-   updateWorstPerformers();
-  updateAnalysis();
+    updateWorstPerformers();
+    updateAnalysis();
+    updateBuildingComparison(); 
 };
 
 
